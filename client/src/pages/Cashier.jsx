@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import Sidebar from '../components/Sidebar';
+import ReceiptView from '../components/ReceiptView';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../api';
-import Sidebar from '../components/Sidebar';
 
 const TAX_RATE = 0.08; // keep the same as the server
 const PAY_METHODS = [
@@ -10,7 +12,27 @@ const PAY_METHODS = [
   { value: 'OTHER', label: 'Other' },
 ];
 
-const ksh = (n) => `Ksh ${n.toLocaleString()}`;
+const ksh = (n) => `Ksh ${Number(n).toLocaleString()}`;
+
+function ItemImage({ item }) {
+  const [broken, setBroken] = useState(false);
+
+  if (item.imageUrl && !broken) {
+    return (
+      <img
+        src={item.imageUrl}
+        alt={item.name}
+        onError={() => setBroken(true)}
+        className="h-14 w-14 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-xl font-bold text-green-700">
+      {item.name[0]}
+    </div>
+  );
+}
 
 export default function Cashier() {
   const { user } = useAuth();
@@ -20,17 +42,81 @@ export default function Cashier() {
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState([]);
   const [payMethod, setPayMethod] = useState('MPESA');
+  const [received, setReceived] = useState('');
   const [status, setStatus] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Mandatory receipt: the order whose receipt must be handled before moving on.
+  // It is kept in sessionStorage so a page refresh brings the pop-up back.
+  const [receiptId, setReceiptId] = useState(() => {
+    try {
+      return Number(sessionStorage.getItem('pendingReceipt')) || null;
+    } catch {
+      return null;
+    }
+  });
+  const [receiptOrder, setReceiptOrder] = useState(null);
+  const [receiptError, setReceiptError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  const [printed, setPrinted] = useState(false);
+
+  async function loadMenu() {
+    try {
+      const d = await apiFetch('/api/menu');
+      setCategories(d.categories);
+      setItems(d.items);
+    } catch (e) {
+      setStatus({ type: 'error', text: e.message });
+    }
+  }
+
   useEffect(() => {
-    apiFetch('/api/menu')
-      .then((d) => {
-        setCategories(d.categories);
-        setItems(d.items);
-      })
-      .catch((e) => setStatus({ type: 'error', text: e.message }));
+    loadMenu();
   }, []);
+
+  // Load the full order for the receipt
+  useEffect(() => {
+    if (!receiptId) return;
+    let cancelled = false;
+    setReceiptOrder(null);
+    setReceiptError('');
+    setPrinted(false);
+    apiFetch(`/api/orders/${receiptId}`)
+      .then((o) => {
+        if (!cancelled) setReceiptOrder(o);
+      })
+      .catch((e) => {
+        if (!cancelled) setReceiptError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [receiptId, reloadKey]);
+
+  // Open the print dialog automatically as soon as the receipt is ready
+  useEffect(() => {
+    if (!receiptOrder) return;
+    const t = setTimeout(() => window.print(), 400);
+    return () => clearTimeout(t);
+  }, [receiptOrder]);
+
+  // The print dialog was opened and closed: allow the next order
+  useEffect(() => {
+    const onAfterPrint = () => setPrinted(true);
+    window.addEventListener('afterprint', onAfterPrint);
+    return () => window.removeEventListener('afterprint', onAfterPrint);
+  }, []);
+
+  function finishReceipt() {
+    try {
+      sessionStorage.removeItem('pendingReceipt');
+    } catch {
+      // ignore
+    }
+    setReceiptId(null);
+    setReceiptOrder(null);
+    setPrinted(false);
+  }
 
   const visible = useMemo(
     () =>
@@ -46,6 +132,8 @@ export default function Cashier() {
     setStatus(null);
     setCart((prev) => {
       const found = prev.find((l) => l.item.id === item.id);
+      const inCart = found ? found.quantity : 0;
+      if (item.maxServings != null && inCart >= item.maxServings) return prev;
       if (found) {
         return prev.map((l) =>
           l.item.id === item.id ? { ...l, quantity: l.quantity + 1 } : l
@@ -58,7 +146,14 @@ export default function Cashier() {
   function changeQty(id, delta) {
     setCart((prev) =>
       prev
-        .map((l) => (l.item.id === id ? { ...l, quantity: l.quantity + delta } : l))
+        .map((l) => {
+          if (l.item.id !== id) return l;
+          const next = l.quantity + delta;
+          if (delta > 0 && l.item.maxServings != null && next > l.item.maxServings) {
+            return l;
+          }
+          return { ...l, quantity: next };
+        })
         .filter((l) => l.quantity > 0)
     );
   }
@@ -71,6 +166,10 @@ export default function Cashier() {
   const tax = Math.round(subtotal * TAX_RATE);
   const total = subtotal + tax;
 
+  const receivedNum = Number(received);
+  const change = receivedNum - total;
+  const cashOk = payMethod !== 'CASH' || (received !== '' && receivedNum >= total);
+
   async function checkout() {
     setSubmitting(true);
     setStatus(null);
@@ -79,18 +178,29 @@ export default function Cashier() {
         method: 'POST',
         body: JSON.stringify({
           payMethod,
+          amountReceived: payMethod === 'CASH' ? receivedNum : undefined,
           items: cart.map((l) => ({ menuItemId: l.item.id, quantity: l.quantity })),
         }),
       });
       setCart([]);
+      setReceived('');
       setStatus({
         type: 'success',
         text: `Order #${order.id} saved. Total ${ksh(order.total)}`,
       });
+
+      // The receipt step is mandatory: remember it and open the pop-up
+      try {
+        sessionStorage.setItem('pendingReceipt', String(order.id));
+      } catch {
+        // ignore
+      }
+      setReceiptId(order.id);
     } catch (e) {
       setStatus({ type: 'error', text: e.message });
     } finally {
       setSubmitting(false);
+      loadMenu(); // refresh what is still in stock
     }
   }
 
@@ -139,20 +249,26 @@ export default function Cashier() {
             {visible.map((item) => (
               <div
                 key={item.id}
-                className="flex flex-col items-center rounded-xl bg-white p-4 text-center shadow-sm"
+                className={`flex flex-col items-center rounded-xl bg-white p-4 text-center shadow-sm ${
+                  item.available ? '' : 'opacity-60'
+                }`}
               >
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-xl font-bold text-green-700">
-                  {item.name[0]}
-                </div>
+                <ItemImage item={item} />
                 <div className="mt-3 text-sm font-medium">{item.name}</div>
                 <div className="mt-1 text-sm font-semibold text-green-600">
                   {ksh(item.price)}
                 </div>
+                {item.available && item.maxServings != null && item.maxServings <= 5 && (
+                  <div className="mt-1 text-xs font-medium text-orange-500">
+                    Only {item.maxServings} left
+                  </div>
+                )}
                 <button
                   onClick={() => addToCart(item)}
-                  className="mt-3 w-full rounded-full bg-green-600 py-1.5 text-sm font-semibold text-white hover:bg-green-700"
+                  disabled={!item.available}
+                  className="mt-3 w-full rounded-full bg-green-600 py-1.5 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:hover:bg-gray-300"
                 >
-                  + Add
+                  {item.available ? '+ Add' : 'Out of stock'}
                 </button>
               </div>
             ))}
@@ -173,7 +289,10 @@ export default function Cashier() {
             <p className="text-sm text-gray-400">No items yet. Tap Add on a menu item.</p>
           )}
           {cart.map((l) => (
-            <div key={l.item.id} className="flex items-center justify-between border-b border-gray-100 py-3">
+            <div
+              key={l.item.id}
+              className="flex items-center justify-between border-b border-gray-100 py-3"
+            >
               <div>
                 <div className="text-sm font-medium">{l.item.name}</div>
                 <div className="text-xs font-semibold text-green-600">
@@ -237,6 +356,28 @@ export default function Cashier() {
           ))}
         </div>
 
+        {payMethod === 'CASH' && (
+          <div className="mt-3">
+            <label className="text-xs font-medium text-gray-500">Amount received (Ksh)</label>
+            <input
+              type="number"
+              min="0"
+              value={received}
+              onChange={(e) => setReceived(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-600"
+            />
+            {received !== '' && cart.length > 0 && (
+              <div
+                className={`mt-1 text-sm font-semibold ${
+                  change >= 0 ? 'text-green-600' : 'text-red-500'
+                }`}
+              >
+                {change >= 0 ? `Change due: ${ksh(change)}` : `Short by ${ksh(-change)}`}
+              </div>
+            )}
+          </div>
+        )}
+
         {status && (
           <div
             className={`mt-3 rounded-lg p-3 text-sm ${
@@ -251,12 +392,78 @@ export default function Cashier() {
 
         <button
           onClick={checkout}
-          disabled={cart.length === 0 || submitting}
+          disabled={cart.length === 0 || submitting || !cashOk}
           className="mt-3 w-full rounded-xl bg-green-600 py-3 font-semibold text-white hover:bg-green-700 disabled:opacity-50"
         >
           {submitting ? 'Saving...' : `Checkout • ${ksh(total)}`}
         </button>
       </aside>
+
+      {/* Mandatory receipt pop-up: no close button, no click-outside, no Esc */}
+      {receiptId &&
+        createPortal(
+          <div className="receipt-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="flex max-h-[95vh] w-full max-w-sm flex-col rounded-2xl bg-gray-100 p-4 shadow-xl">
+              <div className="no-print mb-3 text-center">
+                <div className="text-sm font-semibold text-green-700">
+                  Order #{receiptId} saved
+                </div>
+                <div className="text-xs text-gray-500">
+                  Print the receipt before starting a new order.
+                </div>
+              </div>
+
+              <div className="overflow-y-auto">
+                {receiptError ? (
+                  <div className="no-print rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                    <div>Could not load the receipt: {receiptError}</div>
+                    <button
+                      onClick={() => setReloadKey((k) => k + 1)}
+                      className="mt-2 font-semibold underline"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : receiptOrder ? (
+                  <ReceiptView order={receiptOrder} />
+                ) : (
+                  <p className="no-print text-center text-sm text-gray-400">
+                    Preparing receipt...
+                  </p>
+                )}
+              </div>
+
+              {receiptOrder && receiptOrder.amountReceived != null && (
+                <div className="no-print mt-3 rounded-lg bg-green-50 p-3 text-center text-sm font-semibold text-green-700">
+                  Give change: {ksh(receiptOrder.amountReceived - receiptOrder.total)}
+                </div>
+              )}
+
+              <div className="no-print mt-3 flex gap-2">
+                <button
+                  onClick={() => window.print()}
+                  disabled={!receiptOrder}
+                  className="flex-1 rounded-lg border border-green-600 py-2.5 text-sm font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50"
+                >
+                  {printed ? 'Print again' : 'Print receipt'}
+                </button>
+                <button
+                  onClick={finishReceipt}
+                  disabled={!printed}
+                  className="flex-1 rounded-lg bg-green-600 py-2.5 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-40"
+                >
+                  New order
+                </button>
+              </div>
+              {!printed && receiptOrder && (
+                <p className="no-print mt-2 text-center text-xs text-gray-400">
+                  "New order" unlocks after the print dialog has been used.
+                </p>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

@@ -1,1 +1,51 @@
 @import "tailwindcss";
+
+@media print {
+  @page {
+    margin: 4mm;
+  }
+
+  html,
+  body {
+    height: auto !important;
+    background: #fff !important;
+  }
+
+  /* Hide everything except the receipt */
+  body * {
+    visibility: hidden;
+  }
+  #receipt,
+  #receipt * {
+    visibility: visible;
+  }
+
+  /* The checkout pop-up must not clip or shrink the receipt */
+  .receipt-overlay,
+  .receipt-overlay * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  .receipt-overlay {
+    position: static !important;
+    background: none !important;
+  }
+
+  #receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 76mm; /* fits an 80mm till roll; also fine on A4 */
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    font-size: 12px;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

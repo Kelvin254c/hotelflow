@@ -43,16 +43,17 @@ model MenuItem {
 }
 
 model Order {
-  id        Int         @id @default(autoincrement())
-  status    String      @default("IN_PROGRESS")
-  subtotal  Int
-  tax       Int
-  total     Int
-  payMethod String      // MPESA, CASH, OTHER
-  createdAt DateTime    @default(now())
-  cashierId Int
-  cashier   User        @relation(fields: [cashierId], references: [id])
-  items     OrderItem[]
+  id             Int         @id @default(autoincrement())
+  status         String      @default("IN_PROGRESS")
+  subtotal       Int
+  tax            Int
+  total          Int
+  payMethod      String
+  amountReceived Int?
+  createdAt      DateTime    @default(now())
+  cashierId      Int
+  cashier        User        @relation(fields: [cashierId], references: [id])
+  items          OrderItem[]
 }
 
 model OrderItem {

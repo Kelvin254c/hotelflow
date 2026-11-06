@@ -10,7 +10,17 @@ export async function apiFetch(path, options = {}) {
       ...options.headers,
     },
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    // the reply was not JSON
+  }
+
+  if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
+  if (data === null) {
+    throw new Error('The server sent an unexpected reply. Check the server terminal.');
+  }
   return data;
 }

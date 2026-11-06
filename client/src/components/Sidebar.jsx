@@ -4,14 +4,17 @@ import { useAuth } from '../context/AuthContext';
 export default function Sidebar() {
   const { user, logout } = useAuth();
 
-  const links = [{ to: '/cashier', label: 'Dashboard' }];
+  const links = [
+    { to: '/cashier', label: 'Dashboard' },
+    { to: '/orders', label: 'Orders' },
+  ];
   if (user.role === 'MANAGER') {
     links.push({ to: '/inventory', label: 'Inventory' });
     links.push({ to: '/manager', label: 'Reports' });
   }
 
   return (
-    <aside className="hidden w-52 shrink-0 flex-col border-r border-gray-100 bg-white p-4 md:flex">
+    <aside className="no-print hidden w-52 shrink-0 flex-col border-r border-gray-100 bg-white p-4 md:flex">
       <div className="flex items-center gap-2 px-2 py-2">
         <div className="h-4 w-4 rotate-45 rounded-sm bg-green-600" />
         <span className="text-lg font-bold">Hotelflow</span>
