@@ -6,10 +6,11 @@ const router = express.Router();
 router.use(verifyToken, requireRole('MANAGER'));
 
 function withStatus(item) {
+  const currentStock = Math.round(item.currentStock * 1000) / 1000;
   let status = 'IN_STOCK';
-  if (item.currentStock <= 0) status = 'OUT';
-  else if (item.currentStock <= item.minLevel) status = 'LOW';
-  return { ...item, status };
+  if (currentStock <= 0) status = 'OUT';
+  else if (currentStock <= item.minLevel) status = 'LOW';
+  return { ...item, currentStock, status };
 }
 
 function parseBody(body) {

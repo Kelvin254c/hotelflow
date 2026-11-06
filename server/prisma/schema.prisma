@@ -39,6 +39,7 @@ model MenuItem {
   categoryId Int
   category   Category @relation(fields: [categoryId], references: [id])
   orderItems OrderItem[]
+  recipes    Recipe[]
 }
 
 model Order {
@@ -72,4 +73,16 @@ model Ingredient {
   currentStock Float
   minLevel     Float
   unitCost     Int
+  recipes      Recipe[]
+}
+
+model Recipe {
+  id           Int        @id @default(autoincrement())
+  menuItemId   Int
+  ingredientId Int
+  quantity     Float      // amount of the ingredient used in ONE serving
+  menuItem     MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@unique([menuItemId, ingredientId])
 }
