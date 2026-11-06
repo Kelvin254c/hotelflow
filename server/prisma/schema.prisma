@@ -1,0 +1,75 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+model User {
+  id       Int    @id @default(autoincrement())
+  name     String
+  email    String @unique
+  password String
+  role     Role   @default(CASHIER)
+  orders   Order[]
+}
+enum Role {
+  CASHIER
+  MANAGER
+}
+
+model Category {
+  id    Int        @id @default(autoincrement())
+  name  String
+  items MenuItem[]
+}
+
+model MenuItem {
+  id         Int      @id @default(autoincrement())
+  name       String
+  price      Int      // store Ksh as whole numbers
+  imageUrl   String?
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id])
+  orderItems OrderItem[]
+}
+
+model Order {
+  id        Int         @id @default(autoincrement())
+  status    String      @default("IN_PROGRESS")
+  subtotal  Int
+  tax       Int
+  total     Int
+  payMethod String      // MPESA, CASH, OTHER
+  createdAt DateTime    @default(now())
+  cashierId Int
+  cashier   User        @relation(fields: [cashierId], references: [id])
+  items     OrderItem[]
+}
+
+model OrderItem {
+  id         Int      @id @default(autoincrement())
+  orderId    Int
+  menuItemId Int
+  quantity   Int
+  unitPrice  Int
+  order      Order    @relation(fields: [orderId], references: [id])
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+}
+
+model Ingredient {
+  id           Int    @id @default(autoincrement())
+  name         String
+  category     String
+  unit         String // Kg, Ltrs
+  currentStock Float
+  minLevel     Float
+  unitCost     Int
+}
